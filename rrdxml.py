@@ -20,6 +20,7 @@ def dump(f, rra):
 
 
 def dump_csv(f, rra, out):
+    """Dump RRA to CSV (written to file object out)."""
     w = writer(out)
     for row in dump(f, rra):
         w.writerow([s.strip() for s in row])
