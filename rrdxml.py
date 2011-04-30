@@ -52,7 +52,7 @@ def headers(tree):
     return (s.strip() for s in tree.xpath("//ds/name/text()"))
 
 
-def rows(tree, rra_index):
+def values(tree, rra_index):
     row_nodes = tree.xpath("//rra[%s]/database/row" % rra_index)
     for rn in row_nodes:
         yield (v.text for v in rn)
@@ -64,12 +64,15 @@ def timestamps(tree, rra_index):
     return (get_ts(c) for c in timestamp_nodes)
 
 
+def rows(tree, rra_index):
+    return iunshift(timestamps(tree, rra_index), values(tree, rra_index))
+
+
 def dump(f, rra):
     """Dump RRA to list of lists."""
-    rra_index = rra + 1
     tree = parse(f)
     yield headers(tree)
-    for row in iunshift(timestamps(tree, rra_index), rows(tree, rra_index)):
+    for row in rows(tree, rra + 1):
         yield row
 
 
