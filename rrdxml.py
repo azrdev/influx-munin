@@ -1,15 +1,17 @@
 #!/usr/bin/env python
-"""Export CSV from an RRD XML dump.
 
-Usage: rrdxml.py file.xml rra
+"""Parse RRD XML dumps, i.e. the output of rrdtool dump $file.rrd
+Particulary written for munin RRDs.
 
-Where rra is the 0-based index for the RRA you want to dump.
-
+Code adapted from Ben Godfrey, https://gist.github.com/afternoon/947301
 """
-from csv import writer
-from itertools import chain, izip
-from lxml.etree import parse
-from sys import argv, stdout
+
+# need lxml, stdlib xml.etree ignores comments
+from lxml import etree
+from sys import argv
+
+class RRDException(Exception):
+    pass
 
 
 def comment_content(c):
@@ -35,53 +37,46 @@ def get_ts(c):
     return tstamp.strip()
 
 
-def iunshift(i1, i2):
-    """Take one iterator of values and one iterator of iterators and return an
-    iterator of iterators with the values prepended.
-
-    >>> l = iunshift([1, 2, 3], [[2, 3], [3, 4], [4, 5]])
-    >>> [list(e) for e in l]
-    [[1, 2, 3], [2, 3, 4], [3, 4, 5]]
-
-    """
-    for x in izip(i1, i2):
-        yield chain([x[0]], x[1])
-
-
-def headers(tree):
-    return (s.strip() for s in tree.xpath("//ds/name/text()"))
-
-
-def values(tree, rra_index):
-    row_nodes = tree.xpath("//rra[%s]/database/row" % rra_index)
+def _values(db):
+    row_nodes = db.xpath("./row")
     for rn in row_nodes:
         yield (v.text for v in rn)
 
 
-def timestamps(tree, rra_index):
+def _timestamps(db):
     """Extract timestamps from comments."""
-    timestamp_nodes = tree.xpath("//rra[%s]/database/comment()" % rra_index)
+    timestamp_nodes = db.xpath("./comment()")
     return (get_ts(c) for c in timestamp_nodes)
 
 
-def rows(tree, rra_index):
-    return iunshift(timestamps(tree, rra_index), values(tree, rra_index))
+def cdps(tree):
+    """From the lxml tree of an RRD dump file, yield each CDP as tuple of
+    - consolidation function (MIN, MAX, AVERAGE, LAST)
+    - timestamp
+    - value
+    """
+    # munin RRDs should only have one DS each, but better check
+    ds_ = tree.findall('/ds')
+    if len(ds_) is not 1:
+        raise RRDException("Munin RRD expected to have only one DS, found %d" % len(ds_))
 
+    for rra in tree.findall('/rra'):
+        cf = rra.find('cf').text
+        db = rra.find('database')
 
-def dump(f, rra):
-    """Dump RRA to list of lists."""
-    tree = parse(f)
-    yield headers(tree)
-    for row in rows(tree, rra + 1):
-        yield row
-
-
-def dump_csv(f, rra, out):
-    """Dump RRA to CSV (written to file object out)."""
-    w = writer(out)
-    for row in dump(f, rra):
-        w.writerow([s.strip() for s in row])
+        # yield each cdp (row)
+        for timestamp, row_values in zip(_timestamps(db), _values(db)):
+            value_list = list(row_values)
+            # check again for more than one DS, should not happen
+            if len(value_list) is not 1:
+                raise RRDException("Munin RRD expected to have only one DS, " + 
+                        "but found CDP with values %d" % value_list)
+            yield (cf, timestamp, value_list[0])
 
 
 if __name__ == "__main__":
-    dump_csv(argv[1], int(argv[2]), stdout)
+    rrdfile = argv[1]
+    tree = etree.parse(rrdfile)
+    for cdp in cdps(tree):
+        print(cdp)
+
